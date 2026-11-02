@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+<description><title-info><genre>folk_tale</genre><author><first-name>Народная</first-name><last-name>сказка</last-name></author><book-title>Колобок</book-title><lang>ru</lang></title-info></description>
+<body><section><title><p>Колобок</p></title>
+<p>Жили-были старик со старухой. Вот и просит старик: «Испеки мне, старая, колобок».</p>
+<p>Старуха по амбару помела, по сусекам поскребла и набрала муки пригоршни с две. Замесила тесто на сметане, скатала колобок, изжарила в масле и положила на окошко простынуть.</p>
+<p>Колобок полежал-полежал, да вдруг и покатился — с окна на лавку, с лавки на пол, по полу да к дверям, перепрыгнул через порог в сени, из сеней на крыльцо, с крыльца на двор, а там за ворота, дальше и дальше.</p>
+</section></body></FictionBook>

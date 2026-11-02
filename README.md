@@ -20,7 +20,7 @@ A self-hosted e-book reader that feels like a phone app. Select any word or pass
 
   Longer selections come from one Claude Sonnet call (roughly half a cent), streamed so the translation appears as it's written (first words in about 1.5 s). One- or two-word selections use Google Translate instead (under a second, translation and sentence only, no explanation), falling back to Claude if Google fails. Closing the sheet cancels the request. Results are cached on the server.
   - listen (text-to-speech) and copy
-- **Reading comfort:** 7 themes plus custom page and text colors, 3 reading fonts or the book's own, text size, line spacing, margins, justification, hyphenation, paged or scrolling layout, animated page turns. Two columns on wide screens. Settings are per device.
+- **Reading comfort:** 7 themes plus custom page and text colors, 3 reading fonts or the book's own, text size, line spacing, margins, justification, hyphenation, paged or scrolling layout (Aa → Layout; in Scroll, keep swiping at the end of a chapter to continue into the next), animated page turns. Two columns on wide screens. Settings are per device.
 - **Feels native:** installable to the home screen (PWA): the library shows an **Install** banner (Android/Chrome/Edge open the install dialog; iPhone/iPad get Add to Home Screen steps), also in the account sheet. Installed, it opens full screen without browser bars, works offline for books you've opened, tap the edges or swipe to turn pages, tap the middle to show the controls, and the back button/gesture closes sheets and the book.
 
 ## API key (required for lookups)
@@ -45,8 +45,25 @@ public/              the app (no build step, plain ES modules)
   vendor/foliate/    foliate-js (see VERSION for the commit and the one local patch)
   fonts/             Literata, Source Serif 4, Atkinson Hyperlegible Next (self-hosted, SIL OFL 1.1: OFL-*.txt)
 deploy/              systemd unit, Caddy site block, deploy script
-tests/               python3 -m unittest discover tests ; node --test tests/*.test.mjs
+tests/               unit + browser tests (see Tests)
 ```
+
+## Tests
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once: same anthropic SDK as the Pi
+.venv/bin/python -m unittest discover tests     # server: library, accounts, store, lookups (Claude streaming,
+                                                # Google for 1-2 words, cancel on close), all offline
+node --test tests/*.test.mjs                    # TXT/HTML book adapter
+tests/e2e/run.sh                                # headless Chrome: every format, lookups (streaming, cancel,
+                                                # Google vs Claude), appearance, scroll mode, progress, store,
+                                                # accounts, home-screen install. Needs Google Chrome.
+```
+
+The browser tests start the real server with fake Claude and Google (`tests/e2e/fake_server.py`) on a
+throwaway data folder; only the store section goes online (to Project Gutenberg; `SKIP_STORE=1` skips it).
+Sample books in `tests/fixtures/books/` are Project Gutenberg public-domain editions plus a short folk tale.
+`deploy/deploy.sh` runs the unit tests before every deploy.
 
 API: `POST /api/auth/register|login|logout`, `GET /api/auth/me`, `GET/POST /api/books`, `GET/PATCH/DELETE /api/books/:id`, `GET /api/books/:id/file`, `GET/PUT /api/books/:id/cover`, `POST /api/lookup`, `GET /api/store?q=&lang=&page=`, `POST /api/store/:gutenbergId`, `GET /api/store/:gutenbergId/cover`, `GET /api/config`.
 
@@ -66,7 +83,7 @@ Updates: `deploy/deploy.sh` runs the tests, rsyncs to `pihole:~/context-reader` 
 
 First-time setup (already done on the Pi):
 
-1. `python3 -m venv ~/context-reader/.venv && ~/context-reader/.venv/bin/pip install anthropic`
+1. `python3 -m venv ~/context-reader/.venv && ~/context-reader/.venv/bin/pip install -r ~/context-reader/requirements.txt`
 2. `sudo cp deploy/context-reader.service /etc/systemd/system/ && sudo systemctl enable --now context-reader` (listens on 127.0.0.1:8095)
 3. Append `deploy/Caddyfile.snippet` to `/etc/caddy/Caddyfile`, then `sudo systemctl restart caddy`. A reload doesn't work because the Caddyfile has `admin off`.
 4. DNS: `sudo pihole-FTL --config dns.hosts` now includes `192.168.0.209 reader.pi.local`.

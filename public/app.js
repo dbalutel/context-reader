@@ -541,8 +541,42 @@ const onTap = clientX => {
     else setChrome(!reader.classList.contains('chrome'))
 }
 
+// Scroll mode: foliate scrolls within one chapter. A swipe or wheel gesture that *starts* at the
+// chapter's end (or top) continues into the next (or previous) chapter.
+const atEdge = dir => {
+    const r = view?.renderer
+    return !!r && (dir > 0 ? r.viewSize - r.end <= 2 : r.start <= 0)
+}
+let edgeLock = 0
+const crossChapter = dir => {
+    if (!view || sheet || Date.now() - edgeLock < 800) return
+    edgeLock = Date.now()
+    setChrome(false)
+    dir > 0 ? view.renderer.next() : view.renderer.prev()
+}
+let lastWheel = 0
+const onScrollWheel = e => {
+    const gap = e.timeStamp - lastWheel
+    lastWheel = e.timeStamp
+    const dir = Math.sign(e.deltaY)
+    if (dir && gap > 300 && atEdge(dir)) crossChapter(dir) // a fresh gesture, not momentum running into the edge
+}
+let touch = null
+const onTouchStart = e => {
+    touch = settings.flow === 'scrolled' && e.touches.length === 1
+        ? { y: e.touches[0].clientY, end: atEdge(1), top: atEdge(-1) } : null
+}
+const onTouchEnd = e => {
+    if (!touch || e.target.ownerDocument?.getSelection?.()?.isCollapsed === false) return
+    const dy = touch.y - e.changedTouches[0].clientY
+    if (dy > 60 && touch.end) crossChapter(1)
+    else if (dy < -60 && touch.top) crossChapter(-1)
+    touch = null
+}
+
 let wheelLock = 0
 const onWheel = e => {
+    if (settings.flow === 'scrolled') return onScrollWheel(e)
     if (settings.flow !== 'paginated' || Math.abs(e.deltaY) < Math.abs(e.deltaX) * .8 && Math.abs(e.deltaX) < 20) return
     const now = Date.now()
     if (now - wheelLock < 350) return
@@ -550,6 +584,8 @@ const onWheel = e => {
     turn((e.deltaY || e.deltaX) > 0 ? 1 : -1)
 }
 reader.addEventListener('wheel', onWheel, { passive: true })
+reader.addEventListener('touchstart', onTouchStart, { passive: true })
+reader.addEventListener('touchend', onTouchEnd, { passive: true })
 
 const onKey = e => {
     if (!view || e.metaKey || e.ctrlKey || e.altKey) return
@@ -572,6 +608,8 @@ const onSectionLoad = ({ detail: { doc } }) => {
     const win = doc.defaultView
     doc.addEventListener('keydown', onKey)
     doc.addEventListener('wheel', onWheel, { passive: true })
+    doc.addEventListener('touchstart', onTouchStart, { passive: true })
+    doc.addEventListener('touchend', onTouchEnd, { passive: true })
     // foliate's swipe handler would page while dragging selection handles on touch screens
     win.addEventListener('touchmove', e => { if (!doc.getSelection()?.isCollapsed) e.stopPropagation() }, { capture: true, passive: true })
     doc.addEventListener('click', e => {

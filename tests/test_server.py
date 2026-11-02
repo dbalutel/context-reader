@@ -1,4 +1,4 @@
-"""Server self-check: python3 -m unittest discover tests  (no network needed)."""
+"""Server self-check: .venv/bin/python -m unittest discover tests  (no network needed)."""
 import http.cookiejar
 import json
 import os
@@ -45,6 +45,9 @@ class ServerTest(unittest.TestCase):
     def setUpClass(cls):
         for d in (server.BOOKS, server.COVERS):
             d.mkdir(parents=True, exist_ok=True)
+        # start with no accounts: other test modules share this data dir
+        server.save_json(server.USERS, {})
+        server.save_json(server.SESSIONS, {})
         # a book uploaded before accounts existed: the first account adopts it
         server.save_lib({'0123456789abcdef': {'id': '0123456789abcdef', 'filename': 'old.epub', 'file': 'old.epub',
                                               'size': 1, 'added': 1, 'title': 'Old', 'author': '', 'hasCover': False}})

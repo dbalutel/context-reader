@@ -1,0 +1,8 @@
+{
+  "name": "context-reader-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Browser tests for Context Reader (run with ./run.sh)",
+  "scripts": { "test": "./run.sh" },
+  "devDependencies": { "puppeteer-core": "23.11.1" }
+}
