@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Context Reader</title>
+<meta name="description" content="Read your books and see the meaning of any passage in your language.">
+<meta name="theme-color" content="#E7ECF1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Reader">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="app.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-toc" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></symbol>
+  <symbol id="i-speak" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M15.5 9a4 4 0 010 6M18 6.5a7.5 7.5 0 010 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V6.5A2.5 2.5 0 0013.5 4h-7A2.5 2.5 0 004 6.5v7A2.5 2.5 0 006.5 16H8" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+  <symbol id="i-lang" viewBox="0 0 24 24"><path d="M4 5h9M8.5 3v2M6 5c.6 3.4 2.6 6.2 5.5 7.6M11 5c-.8 3.8-3.2 6.8-6.5 8.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M12.5 21l4-9.5 4 9.5M14 17.5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-mark" viewBox="0 0 24 24"><path d="M14.5 4.5l5 5-8.5 8.5H6v-5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M4 21h9" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+  <symbol id="i-store" viewBox="0 0 24 24"><path d="M5 4.5h3.2v15H5zM9.8 4.5H13v15H9.8z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14.6 6.2l3-.8 3.4 13.2-3 .8z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V3.5M8 7l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.5 10H6.5A1.5 1.5 0 005 11.5v8A1.5 1.5 0 006.5 21h11a1.5 1.5 0 001.5-1.5v-8a1.5 1.5 0 00-1.5-1.5h-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<!-- Sign in -->
+<main id="auth" class="screen auth" hidden>
+  <div class="auth-card">
+    <img class="auth-logo" src="icons/icon.svg" alt="" width="64" height="64">
+    <h1>Context Reader</h1>
+    <p class="auth-sub">Your books, with the meaning of any passage one tap away.</p>
+    <div class="seg auth-seg" role="radiogroup" aria-label="Account">
+      <button type="button" role="radio" data-mode="login" aria-checked="true">Sign in</button>
+      <button type="button" role="radio" data-mode="register" aria-checked="false">Create account</button>
+    </div>
+    <form id="auth-form" novalidate>
+      <label class="field"><span>Name</span>
+        <input id="auth-name" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="32" required></label>
+      <label class="field"><span>Password</span>
+        <input id="auth-pass" name="password" type="password" autocomplete="current-password" minlength="6" required></label>
+      <p id="auth-hint" class="auth-hint" hidden>At least 6 characters. Each account has its own private library.</p>
+      <p id="auth-error" class="auth-error" role="alert" hidden></p>
+      <button id="auth-submit" class="btn btn-ink btn-block" type="submit">Sign in</button>
+    </form>
+  </div>
+</main>
+
+<!-- Library -->
+<main id="library" class="screen" hidden>
+  <header class="lib-head">
+    <h1>Library</h1>
+    <div class="lib-actions">
+      <button id="store-btn" class="btn btn-soft" type="button" aria-label="Free books"><svg class="ic"><use href="#i-store"/></svg><span class="lbl">Free books</span></button>
+      <button id="add-btn" class="btn btn-ink" type="button" aria-label="Add book"><svg class="ic"><use href="#i-plus"/></svg><span class="lbl">Add book</span></button>
+      <button id="account-btn" class="avatar" type="button" aria-label="Account"></button>
+    </div>
+    <input id="file-input" type="file" multiple hidden
+      accept=".epub,.mobi,.azw,.azw3,.kf8,.prc,.fb2,.fbz,.zip,.cbz,.pdf,.txt,.html,.htm,application/epub+zip,application/pdf,text/plain">
+  </header>
+
+  <div id="install-banner" class="install-banner" hidden>
+    <img src="icons/icon.svg" alt="" width="44" height="44">
+    <p><strong>Install the app</strong><span>Full screen, from your home screen</span></p>
+    <button id="install-btn" class="btn btn-ink" type="button">Install</button>
+    <button id="install-dismiss" class="icon-btn" type="button" aria-label="Not now">✕</button>
+  </div>
+
+  <section id="continue" class="continue" hidden aria-label="Continue reading"></section>
+  <ul id="uploads" class="uploads" aria-live="polite"></ul>
+
+  <section id="shelf-wrap" hidden>
+    <h2 class="shelf-title">All books <span id="shelf-count"></span></h2>
+    <ul id="shelf" class="shelf"></ul>
+  </section>
+
+  <section id="empty" class="empty" hidden>
+    <svg class="empty-art" viewBox="0 0 160 120" aria-hidden="true">
+      <rect x="30" y="8" width="100" height="104" rx="6" class="ea-page"/>
+      <rect x="44" y="50" width="62" height="12" rx="3" class="ea-mark"/>
+      <path d="M46 28h68M46 40h56M46 56h58M46 72h68M46 84h40" class="ea-line"/>
+    </svg>
+    <h2>Add your first book</h2>
+    <p>EPUB, MOBI, AZW3, FB2, PDF, CBZ and TXT files work. While you read, select any word or passage to see what it means in your language.</p>
+    <div class="empty-actions">
+      <button id="empty-store" class="btn btn-ink" type="button"><svg class="ic"><use href="#i-store"/></svg>Browse free books</button>
+      <button id="empty-add" class="btn btn-soft" type="button"><svg class="ic"><use href="#i-plus"/></svg>Add your own</button>
+    </div>
+  </section>
+
+  <div id="drop-overlay" class="drop-overlay" hidden><p>Drop books to add them</p></div>
+</main>
+
+<!-- Free books -->
+<main id="store" class="screen store" hidden aria-labelledby="store-title">
+  <header class="store-head">
+    <div class="store-top">
+      <button id="store-back" class="icon-btn" type="button" aria-label="Back to library"><svg class="ic"><use href="#i-back"/></svg></button>
+      <h1 id="store-title">Free books</h1>
+    </div>
+    <input id="store-q" class="search" type="search" placeholder="Search titles and authors" aria-label="Search free books" autocomplete="off" enterkeyhint="search">
+    <div id="store-langs" class="chips" role="radiogroup" aria-label="Book language"></div>
+  </header>
+  <p id="store-status" class="store-status" aria-live="polite"></p>
+  <ul id="store-list" class="shelf"></ul>
+  <button id="store-more" class="btn btn-soft store-more" type="button" hidden>Show more</button>
+  <p class="store-credit">Public-domain books from Project Gutenberg, free to read and share.</p>
+</main>
+
+<!-- Reader -->
+<section id="reader" class="screen" hidden aria-label="Reader">
+  <div id="view-host" class="view-host"></div>
+
+  <header id="r-top" class="r-bar r-top">
+    <button id="r-back" class="icon-btn" type="button" aria-label="Back to library"><svg class="ic"><use href="#i-back"/></svg></button>
+    <div class="r-title"><span id="r-book-title"></span><span id="r-chapter"></span></div>
+    <button id="r-lang" class="lang-chip" type="button" aria-label="Translation language"><svg class="ic"><use href="#i-lang"/></svg><span id="r-lang-code"></span></button>
+    <button id="r-toc" class="icon-btn" type="button" aria-label="Contents"><svg class="ic"><use href="#i-toc"/></svg></button>
+    <button id="r-aa" class="icon-btn aa" type="button" aria-label="Appearance">Aa</button>
+  </header>
+
+  <footer id="r-bottom" class="r-bar r-bottom">
+    <input id="r-progress" type="range" min="0" max="1" step="0.0005" value="0" aria-label="Position in book">
+    <div class="r-meta"><span id="r-time"></span><span id="r-pct"></span></div>
+  </footer>
+
+  <div id="r-mini" class="r-mini" aria-hidden="true"><span id="r-mini-ch"></span><span id="r-mini-pct"></span></div>
+  <button id="lk-pill" class="lk-pill" type="button" hidden><svg class="ic"><use href="#i-lang"/></svg>Translate</button>
+  <div id="r-loading" class="r-loading" hidden><div class="spinner"></div><p>Opening book…</p></div>
+</section>
+
+<div id="scrim" class="scrim" hidden></div>
+
+<!-- Lookup -->
+<div id="sheet-lookup" class="sheet" role="dialog" aria-modal="true" aria-labelledby="lk-text" hidden>
+  <div class="grip" aria-hidden="true"></div>
+  <div class="sheet-body">
+    <div class="lk-head">
+      <div id="lk-text" class="lk-selection"></div>
+      <div class="lk-tools">
+        <button id="lk-speak" class="icon-btn" type="button" aria-label="Listen"><svg class="ic"><use href="#i-speak"/></svg></button>
+        <button id="lk-copy" class="icon-btn" type="button" aria-label="Copy translation"><svg class="ic"><use href="#i-copy"/></svg></button>
+      </div>
+    </div>
+    <button id="lk-langs" class="lk-langs" type="button"><span id="lk-from"></span><span aria-hidden="true">→</span><span id="lk-to"></span></button>
+    <p id="lk-translation" class="lk-translation"></p>
+    <p id="lk-error" class="lk-error" hidden></p>
+
+    <section id="lk-explain" class="lk-sec" hidden>
+      <h3>In this context</h3>
+      <p id="lk-explain-text" class="lk-explain"></p>
+    </section>
+    <section id="lk-sentence" class="lk-sec" hidden>
+      <h3>The sentence</h3>
+      <p id="lk-sentence-orig" class="lk-orig"></p>
+      <p id="lk-sentence-tr" class="lk-ctx-tr"></p>
+    </section>
+    <section id="lk-defs" class="lk-sec" hidden>
+      <h3>Other meanings</h3>
+      <div id="lk-defs-list"></div>
+    </section>
+    <p id="lk-credit" class="lk-credit"></p>
+  </div>
+</div>
+
+<!-- Appearance -->
+<div id="sheet-aa" class="sheet" role="dialog" aria-modal="true" aria-labelledby="aa-title" hidden>
+  <div class="grip" aria-hidden="true"></div>
+  <div class="sheet-body">
+    <h2 id="aa-title" class="sheet-title">Appearance</h2>
+    <div class="themes" id="aa-themes" role="radiogroup" aria-label="Theme"></div>
+    <div class="custom-colors" id="aa-custom" hidden>
+      <label>Page <input id="aa-bg" type="color"></label>
+      <label>Text <input id="aa-fg" type="color"></label>
+    </div>
+
+    <div class="row">
+      <span class="row-label">Font</span>
+      <div class="seg" id="aa-font" role="radiogroup" aria-label="Font">
+        <button type="button" data-v="literata" style="font-family:Literata">Literata</button>
+        <button type="button" data-v="source" style="font-family:'Source Serif 4'">Source</button>
+        <button type="button" data-v="atkinson" style="font-family:'Atkinson Hyperlegible Next'">Atkinson</button>
+        <button type="button" data-v="publisher">Book</button>
+      </div>
+    </div>
+    <div class="row">
+      <span class="row-label">Text size</span>
+      <div class="stepper">
+        <button id="aa-smaller" type="button" aria-label="Smaller text" class="small-a">A</button>
+        <output id="aa-size"></output>
+        <button id="aa-bigger" type="button" aria-label="Larger text" class="big-a">A</button>
+      </div>
+    </div>
+    <label class="row"><span class="row-label">Line spacing</span><input id="aa-lh" type="range" min="1.2" max="2.1" step="0.05"></label>
+    <label class="row"><span class="row-label">Margins</span><input id="aa-margin" type="range" min="2" max="16" step="1"></label>
+    <div class="row">
+      <span class="row-label">Layout</span>
+      <div class="seg" id="aa-flow" role="radiogroup" aria-label="Layout">
+        <button type="button" data-v="paginated">Pages</button>
+        <button type="button" data-v="scrolled">Scroll</button>
+      </div>
+    </div>
+    <label class="row switch"><span class="row-label">Justify text</span><input id="aa-justify" type="checkbox"></label>
+    <label class="row switch"><span class="row-label">Hyphenation</span><input id="aa-hyphen" type="checkbox"></label>
+    <label class="row switch"><span class="row-label">Animate page turns</span><input id="aa-anim" type="checkbox"></label>
+  </div>
+</div>
+
+<!-- Contents -->
+<div id="sheet-toc" class="sheet tall" role="dialog" aria-modal="true" aria-labelledby="toc-title" hidden>
+  <div class="grip" aria-hidden="true"></div>
+  <div class="sheet-body">
+    <h2 id="toc-title" class="sheet-title">Contents</h2>
+    <ol id="toc-list" class="toc-list"></ol>
+  </div>
+</div>
+
+<!-- Language -->
+<div id="sheet-lang" class="sheet tall" role="dialog" aria-modal="true" aria-labelledby="lang-title" hidden>
+  <div class="grip" aria-hidden="true"></div>
+  <div class="sheet-body">
+    <h2 id="lang-title" class="sheet-title">Translate this book into</h2>
+    <p id="lang-book" class="sheet-sub"></p>
+    <label class="row"><span class="row-label">The book is written in</span><select id="lang-source"></select></label>
+    <ul id="lang-list" class="lang-list" role="listbox" aria-label="Translation language"></ul>
+  </div>
+</div>
+
+<!-- Book options -->
+<div id="sheet-book" class="sheet" role="dialog" aria-modal="true" aria-labelledby="bk-title" hidden>
+  <div class="grip" aria-hidden="true"></div>
+  <div class="sheet-body">
+    <div class="bk-head"><div id="bk-cover" class="bk-cover"></div><div><h2 id="bk-title"></h2><p id="bk-author"></p></div></div>
+    <button id="bk-read" class="list-btn" type="button">Read</button>
+    <button id="bk-lang" class="list-btn" type="button">Translation language <span id="bk-lang-name"></span></button>
+    <button id="bk-remove" class="list-btn danger" type="button">Remove from library</button>
+  </div>
+</div>
+
+<!-- Account -->
+<div id="sheet-account" class="sheet" role="dialog" aria-modal="true" aria-labelledby="acct-name" hidden>
+  <div class="grip" aria-hidden="true"></div>
+  <div class="sheet-body">
+    <div class="bk-head"><span id="acct-avatar" class="avatar big" aria-hidden="true"></span><div><h2 id="acct-name"></h2><p>Your library, reading positions and translation languages are private to this account.</p></div></div>
+    <button id="acct-install" class="list-btn" type="button" hidden>Install app on this device</button>
+    <button id="acct-logout" class="list-btn" type="button">Sign out</button>
+  </div>
+</div>
+
+<!-- iPhone / iPad install steps -->
+<div id="sheet-ios" class="sheet" role="dialog" aria-modal="true" aria-labelledby="ios-title" hidden>
+  <div class="grip" aria-hidden="true"></div>
+  <div class="sheet-body">
+    <h2 id="ios-title" class="sheet-title">Add to Home Screen</h2>
+    <ol class="steps">
+      <li>Tap <svg class="ic inline-ic" aria-label="Share"><use href="#i-share"/></svg> <strong>Share</strong> in the browser toolbar.</li>
+      <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
+      <li>Tap <strong>Add</strong>. Open Context Reader from your home screen: it runs full screen, without the browser bars.</li>
+    </ol>
+    <button id="ios-done" class="btn btn-ink btn-block" type="button">Got it</button>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

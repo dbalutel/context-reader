@@ -1,0 +1,2 @@
+foliate-js 78914aef4466eb960965702401634c2cb348e9b1 (MIT) https://github.com/johnfactotum/foliate-js
+Local patch: paginator.js render()/expand()/#afterScroll() skip a section whose <body> is not parsed yet (race when opening KF8/XHTML books).

@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "Context Reader",
+  "short_name": "Reader",
+  "description": "Read your books and see the meaning of any passage in your language.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#E7ECF1",
+  "theme_color": "#E7ECF1",
+  "categories": ["books", "education"],
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "screenshots": [
+    { "src": "screenshots/library.jpg", "sizes": "780x1688", "type": "image/jpeg", "form_factor": "narrow", "label": "Your library" },
+    { "src": "screenshots/reader.jpg", "sizes": "780x1688", "type": "image/jpeg", "form_factor": "narrow", "label": "Reading a book" }
+  ]
+}

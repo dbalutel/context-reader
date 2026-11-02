@@ -1,0 +1,31 @@
+reader.pi.local {
+    encode zstd gzip
+    request_body {
+        max_size 300MB
+    }
+    reverse_proxy localhost:8095
+    tls /home/pi/ca/certs/pi.crt /home/pi/ca/private/pi.key
+}
+
+# Public address with a real certificate (Let's Encrypt wildcard via Cloudflare DNS).
+# Needs the caddy-dns/cloudflare build at /usr/local/bin/caddy-cloudflare, the systemd
+# override in deploy/caddy-cloudflare.conf, and CF_API_TOKEN in /etc/caddy/cloudflare.env.
+*.balu.party {
+    tls {
+        dns cloudflare {env.CF_API_TOKEN}
+        resolvers 1.1.1.1
+    }
+
+    @reader host reader.balu.party
+    handle @reader {
+        encode zstd gzip
+        request_body {
+            max_size 300MB
+        }
+        reverse_proxy localhost:8095
+    }
+
+    handle {
+        abort
+    }
+}

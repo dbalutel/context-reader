@@ -1,0 +1,24 @@
+[Unit]
+Description=Context Reader (e-book reader with in-context translation)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/context-reader
+Environment=READER_DATA=/home/pi/context-reader-data
+Environment=READER_HOST=127.0.0.1
+Environment=READER_PORT=8095
+# ANTHROPIC_API_KEY=... (required for lookups) and optional READER_MODEL=...
+EnvironmentFile=-/etc/context-reader.env
+ExecStart=/home/pi/context-reader/.venv/bin/python server.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/pi/context-reader-data
+
+[Install]
+WantedBy=multi-user.target
