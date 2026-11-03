@@ -714,6 +714,7 @@ const blocksText = blocks => blocks.map(p => {
     return normalizeText(copy.textContent)
 }).join('\n\n')
 
+const MAX_SELECTION = 1000 // characters, about a long paragraph; the server enforces the same limit
 const checkSelection = (doc, fromMouse) => {
     const sel = doc.getSelection()
     const text = sel ? normalizeText(sel.toString()) : ''
@@ -721,10 +722,10 @@ const checkSelection = (doc, fromMouse) => {
     if (sheet) return
     const range = sel.getRangeAt(0)
     const pdf = !!range.startContainer.parentElement?.closest('.textLayer') // PDF text is positioned spans: use the plain text
-    const blocks = pdf ? null : selectionBlocks(range)
+    const blocks = pdf || text.length > MAX_SELECTION ? null : selectionBlocks(range)
     pending = {
         // translate exactly what the popup shows, so both sides break in the same places
-        text: (blocks?.length ? blocksText(blocks) : text).slice(0, 1000),
+        text: blocks?.length ? blocksText(blocks) : text,
         blocks,
         context: blocks?.length > 1 || text.includes('\n') ? '' : sentenceAround(range, current?.sourceLang || current?.language),
         doc,
@@ -770,6 +771,7 @@ const openLookup = async () => {
     if (!pending || !current) return
     hidePill()
     const { text, context } = pending
+    if (text.length > MAX_SELECTION) return toast('Too much text to translate at once. Select up to 1,000 characters, about a paragraph.')
     lastLookup = pending
     const seq = ++lookupSeq
     const target = TARGETS.includes(current.targetLang) ? current.targetLang : defaultTarget(current.sourceLang || current.language)

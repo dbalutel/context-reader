@@ -190,6 +190,23 @@ page.off('requestfailed', onFailed)
 ok(aborted.length === 1 && /ABORTED/.test(aborted[0]), `closing the popup cancels the lookup (${aborted})`)
 ok(await page.$eval('#lk-error', e => e.hidden), 'a cancelled lookup shows no error')
 
+// a selection over the limit is refused with a hint, without opening the popup or calling the server
+const lookups = []
+const onReq = r => { if (r.url().endsWith('/api/lookup')) lookups.push(r) }
+page.on('request', onReq)
+await page.evaluate(() => {
+    const { doc } = document.querySelector('foliate-view').renderer.getContents()[0]
+    const r = doc.createRange(); r.selectNodeContents(doc.body)
+    doc.getSelection().removeAllRanges(); doc.getSelection().addRange(r)
+})
+await page.waitForSelector('#lk-pill:not([hidden])', { timeout: 3000 })
+await page.click('#lk-pill')
+await wait(500)
+page.off('request', onReq)
+ok(await page.$eval('#toast', e => !e.hidden && e.textContent.includes('1,000 characters')), 'too long a selection shows a hint')
+ok(!lookups.length && !await page.$('#sheet-lookup.open'), 'and sends nothing')
+await page.evaluate(() => document.querySelector('foliate-view').renderer.getContents()[0].doc.getSelection().removeAllRanges())
+
 // multi-paragraph selection keeps paragraphs in the original and the translation
 await page.evaluate(() => {
     const { doc } = document.querySelector('foliate-view').renderer.getContents()[0]

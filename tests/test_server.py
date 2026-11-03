@@ -152,6 +152,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(c.req('POST', '/api/lookup', {'text': '', 'target': 'de'})[0], 400)
         self.assertEqual(c.req('POST', '/api/lookup', {'text': 'hi', 'target': 'es'})[0], 400)
         self.assertEqual(c.req('POST', '/api/lookup', b'not json')[0], 400)
+        self.assertEqual(c.req('POST', '/api/lookup', {'text': 'x' * 1001, 'target': 'de'})[0], 400)  # too long
 
         calls = []
 

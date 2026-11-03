@@ -451,6 +451,7 @@ input[type=range] { width: 100%; accent-color: var(--r-fg, var(--ink)); }
   background: var(--ink); color: var(--bg); font-size: 15px;
   box-shadow: 0 8px 24px -8px rgb(0 0 0 / .4);
   animation: pill-in .22s var(--ease);
+  pointer-events: none; /* text only; taps reach the Translate pill underneath */
 }
 
 @media (prefers-reduced-motion: reduce) {
