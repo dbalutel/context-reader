@@ -357,6 +357,33 @@ await page.waitForFunction(() => document.querySelectorAll('#store-list .store-b
 await wait(1500)
 await shot('18-store')
 ok(await page.$$eval('#store-list .store-book', els => els.length) >= 20, 'store shows popular English books')
+// a title with nothing in the chosen language (English) falls back to all languages
+await page.type('#store-q', 'don quijote')
+await page.waitForFunction(() => /Showing all languages/.test(document.querySelector('#store-status').textContent), { timeout: 30000 })
+const quijote = await page.$$eval('#store-list .store-book', els => els.map(c => [c.querySelector('.b-title').textContent, c.querySelector('.b-lang')?.textContent]))
+console.log('don quijote:', quijote.slice(0, 3))
+ok(quijote.some(([t, l]) => t === 'Don Quijote' && l === 'Spanish'), 'no English match: shows the Spanish Don Quijote, labelled Spanish')
+await shot('18b-store-any-language')
+await page.$eval('#store-q', e => { e.value = ''; e.dispatchEvent(new Event('input', { bubbles: true })) })
+await wait(700)
+// Russian searches also cover Wikisource; Get downloads the whole work as EPUB through Wikisource's export tool
+await page.evaluate(() => [...document.querySelectorAll('#store-langs button')].find(b => b.textContent === 'Русский').click())
+await page.type('#store-q', 'пиковая дама')
+// the app's CSP forbids eval, so the card lookup is repeated in each page function
+const wsButton = () => [...document.querySelectorAll('#store-list .store-book')].find(c =>
+    c.querySelector('.b-title').textContent === 'Пиковая дама' && /Пушкин/.test(c.querySelector('.b-author').textContent)
+    && [...c.querySelectorAll('.b-lang')].some(e => e.textContent === 'Wikisource'))?.querySelector('.get-btn')
+await page.waitForFunction(wsButton, { timeout: 30000 })
+ok(true, 'Russian search lists Pushkin\'s "Пиковая дама" from Wikisource')
+await page.evaluate(wsButton).then(() => page.evaluateHandle(wsButton)).then(btn => btn.click())
+await page.waitForFunction(() => [...document.querySelectorAll('#store-list .store-book')].some(c =>
+    c.querySelector('.b-title').textContent === 'Пиковая дама' && [...c.querySelectorAll('.b-lang')].some(e => e.textContent === 'Wikisource')
+    && c.querySelector('.get-btn').textContent === 'Read'), { timeout: 120000 })
+const wsBook = await page.evaluate(async () => (await (await fetch('/api/books')).json()).find(b => b.source?.startsWith('wikisource:ru:Пиковая дама')))
+ok(wsBook && wsBook.language === 'ru' && wsBook.size > 10000, `added to the library as a Russian EPUB (${wsBook?.size} bytes)`)
+await shot('18c-store-wikisource')
+await page.$eval('#store-q', e => { e.value = ''; e.dispatchEvent(new Event('input', { bubbles: true })) })
+await wait(700)
 await page.evaluate(() => [...document.querySelectorAll('#store-langs button')].find(b => b.textContent === 'Deutsch').click())
 await page.waitForFunction(() => /\(German\)|Verwandlung|Faust|Grimm|Nietzsche/.test(document.querySelector('#store-list').textContent) || document.querySelectorAll('#store-list .store-book').length > 5, { timeout: 30000 })
 await page.type('#store-q', 'Faust')

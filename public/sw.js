@@ -1,6 +1,6 @@
-// Offline support: app shell stale-while-revalidate, vendor/fonts and book files cache-first
+// Offline support: app shell network-first (a deploy shows on the next load), vendor/fonts and book files cache-first
 // (book ids never change), library list network-first. Lookups always go to the network.
-const SHELL = 'shell-v3'
+const SHELL = 'shell-v4'
 const STATIC = 'static-v2'
 const BOOKS = 'books'
 const CORE = ['/', '/app.js', '/app.css', '/text-book.js', '/manifest.webmanifest', '/fonts/fonts.css', '/icons/icon.svg', '/vendor/foliate/view.js']
@@ -32,15 +32,6 @@ const networkFirst = async (req, name) => {
         throw e
     }
 }
-const staleWhileRevalidate = async (req, name) => {
-    const hit = await caches.match(req, { ignoreSearch: true })
-    const fresh = fetch(req).then(async res => {
-        if (res.ok) (await caches.open(name)).put(req, res.clone())
-        return res
-    })
-    if (hit) { fresh.catch(() => {}); return hit }
-    return fresh
-}
 
 self.addEventListener('fetch', e => {
     const req = e.request
@@ -51,6 +42,6 @@ self.addEventListener('fetch', e => {
     else if (/^\/api\/books\/[a-f0-9]{16}\/cover$/.test(p) || p === '/api/books' || p === '/api/config' || p === '/api/auth/me') e.respondWith(networkFirst(req, STATIC))
     else if (p.startsWith('/api/')) return
     else if (p.startsWith('/vendor/') || p.startsWith('/fonts/')) e.respondWith(cacheFirst(req, STATIC))
-    else if (req.mode === 'navigate') e.respondWith(staleWhileRevalidate(new Request('/'), SHELL))
-    else e.respondWith(staleWhileRevalidate(req, SHELL))
+    else if (req.mode === 'navigate') e.respondWith(networkFirst(new Request('/'), SHELL))
+    else e.respondWith(networkFirst(req, SHELL))
 })

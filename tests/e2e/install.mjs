@@ -70,6 +70,18 @@ await p.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) App
 await p.evaluateOnNewDocument(() => Object.defineProperty(navigator, 'standalone', { get: () => true }))
 await signIn(p)
 ok(await p.$eval('#install-banner', e => e.hidden) && await p.$eval('#acct-install', e => e.hidden), 'installed app: no install prompts')
+// 4. Offline: once the service worker has cached the app, it still opens without a network
+p = await b.newPage()
+await signIn(p)
+await p.evaluate(() => navigator.serviceWorker.ready)
+await p.reload({ waitUntil: 'networkidle0' }) // now the page is controlled by the worker
+ok(await p.evaluate(() => !!navigator.serviceWorker.controller), 'service worker controls the page')
+await p.setOfflineMode(true)
+await p.reload({ waitUntil: 'domcontentloaded' })
+await p.waitForSelector('#library:not([hidden])', { timeout: 5000 }).catch(() => {})
+ok(await p.$eval('#library', e => !e.hidden), 'offline: the app still opens to the library')
+await p.setOfflineMode(false)
+
 console.log('page errors:', errs.length ? errs : 'none')
 ok(!errs.length, 'no page errors')
 await b.close()

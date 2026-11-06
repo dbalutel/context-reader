@@ -1,5 +1,6 @@
 """Server self-check: .venv/bin/python -m unittest discover tests  (no network needed)."""
 import http.cookiejar
+import io
 import json
 import os
 import sys
@@ -250,8 +251,29 @@ class ServerTest(unittest.TestCase):
           <entry><id>https://www.gutenberg.org/ebooks/1342.opds</id><title>Pride and Prejudice</title><content>Jane Austen</content></entry>
         </feed>"""
         self.assertEqual(server.parse_opds(xml, ''), {'more': True, 'books': [
-            {'id': 22367, 'title': 'Die Verwandlung', 'language': 'de', 'author': 'Franz Kafka'},
-            {'id': 1342, 'title': 'Pride and Prejudice', 'language': 'en', 'author': 'Jane Austen'}]})
+            {'id': 22367, 'source': 'gutenberg:22367', 'title': 'Die Verwandlung', 'language': 'de', 'author': 'Franz Kafka'},
+            {'id': 1342, 'source': 'gutenberg:1342', 'title': 'Pride and Prejudice', 'language': 'en', 'author': 'Jane Austen'}]})
+
+    def test_wikisource_search_keeps_whole_works(self):
+        reply = json.dumps({'query': {'pages': [
+            {'title': 'Пиковая дама', 'index': 1, 'pageprops': {'disambiguation': ''}},
+            {'title': 'ЭСБЕ/Давыдов', 'index': 2},
+            {'title': 'Война и мир (Толстой)', 'index': 4},
+            {'title': 'Садко (А. К. Толстой; перевод)', 'index': 3},
+            {'title': 'Указ Президента', 'index': 5}]}}).encode()
+        urls = []
+        orig = server.http_get
+        server.http_get = lambda url, timeout=20: urls.append(url) or io.BytesIO(reply)
+        server._store_cache.clear()
+        try:
+            books = server.wikisource_search('толстой', 'ru')
+        finally:
+            server.http_get = orig
+        self.assertTrue(urls[0].startswith('https://ru.wikisource.org/w/api.php?'))
+        self.assertEqual([(b['title'], b['author'], b['source']) for b in books], [
+            ('Садко', 'А. К. Толстой', 'wikisource:ru:Садко (А. К. Толстой; перевод)'),
+            ('Война и мир', 'Толстой', 'wikisource:ru:Война и мир (Толстой)'),
+            ('Указ Президента', '', 'wikisource:ru:Указ Президента')])
 
     def test_store_add_and_search(self):
         c = self.ann
@@ -268,7 +290,8 @@ class ServerTest(unittest.TestCase):
         server.download_epub = fake_download
         server.store_cover = lambda gid: b'\xff\xd8 jpeg'
         server.store_search = lambda q, lang, page: {'more': False, 'books': [
-            {'id': 98765, 'title': 'T', 'language': 'en', 'author': 'A'}, {'id': 1, 'title': 'U', 'language': 'en', 'author': ''}]}
+            {'id': 98765, 'source': 'gutenberg:98765', 'title': 'T', 'language': 'en', 'author': 'A'},
+            {'id': 1, 'source': 'gutenberg:1', 'title': 'U', 'language': 'en', 'author': ''}]}
         try:
             code, meta, _ = c.req('POST', '/api/store/98765', {'title': 'Faust', 'author': 'Goethe', 'language': 'de'})
             code2, again, _ = c.req('POST', '/api/store/98765', {'title': 'Faust'})
@@ -284,6 +307,46 @@ class ServerTest(unittest.TestCase):
         self.assertEqual([b['owned'] for b in found['books']], [True, False])
         self.assertEqual((cover, headers['Content-Type']), (b'\xff\xd8 jpeg', 'image/jpeg'))
         self.assertEqual(c.req('GET', f'/api/books/{meta["id"]}/file')[1], b'PK\x03\x04 epub')
+
+    def test_wikisource_books_in_store(self):
+        c = self.ann
+        ws_book = {'id': 'Война и мир (Толстой)', 'source': 'wikisource:ru:Война и мир (Толстой)', 'title': 'Война и мир',
+                   'author': 'Толстой', 'language': 'ru', 'provider': 'Wikisource'}
+        gb_book = {'id': 7, 'source': 'gutenberg:7', 'title': 'G', 'language': 'ru', 'author': ''}
+        searched, fetched = [], []
+
+        def fake_ws_download(lang, page, dest):
+            fetched.append((lang, page))
+            dest.write_bytes(b'PK\x03\x04 ws epub')
+        orig = server.store_search, server.wikisource_search, server.download_wikisource
+        server.store_search = lambda q, lang, page: {'more': True, 'books': [gb_book]}
+        server.wikisource_search = lambda q, lang: searched.append((q, lang)) or [ws_book]
+        server.download_wikisource = fake_ws_download
+        try:
+            _, ru, _ = c.req('GET', '/api/store?q=%D0%BC%D0%B8%D1%80&lang=ru')
+            _, ru2, _ = c.req('GET', '/api/store?q=%D0%BC%D0%B8%D1%80&lang=ru&page=2')
+            _, de, _ = c.req('GET', '/api/store?q=faust&lang=de')
+            _, browse, _ = c.req('GET', '/api/store?lang=ru')
+            code, meta, _ = c.req('POST', '/api/store/wikisource', {'lang': 'ru', 'page': ws_book['id'], 'title': 'Война и мир', 'author': 'Толстой'})
+            code2, again, _ = c.req('POST', '/api/store/wikisource', {'lang': 'ru', 'page': ws_book['id']})
+            _, owned, _ = c.req('GET', '/api/store?q=%D0%BC%D0%B8%D1%80&lang=ru')
+            bad = [c.req('POST', '/api/store/wikisource', body)[0] for body in (
+                {'lang': 'en', 'page': 'Hamlet'}, {'lang': 'ru', 'page': ''}, {'lang': 'ru', 'page': 'ЭСБЕ/Давыдов'})]
+        finally:
+            server.store_search, server.wikisource_search, server.download_wikisource = orig
+        self.assertEqual([b['source'] for b in ru['books']], ['gutenberg:7', ws_book['source']], 'Gutenberg first, then Wikisource')
+        self.assertTrue(ru['more'])
+        self.assertEqual([b['source'] for b in ru2['books'] + de['books'] + browse['books']], ['gutenberg:7'] * 3,
+                         'Wikisource only on the first page of a Russian or Romanian search')
+        self.assertEqual(searched, [('мир', 'ru'), ('мир', 'ru')])
+        self.assertEqual(code, 201)
+        self.assertEqual((meta['title'], meta['author'], meta['language'], meta['source']),
+                         ('Война и мир', 'Толстой', 'ru', ws_book['source']))
+        self.assertEqual((code2, again['id']), (200, meta['id']), 'adding twice returns the same book')
+        self.assertEqual(fetched, [('ru', ws_book['id'])])
+        self.assertEqual([b['owned'] for b in owned['books']], [False, True])
+        self.assertEqual(bad, [400, 400, 400])
+        self.assertEqual(c.req('GET', f'/api/books/{meta["id"]}/file')[1], b'PK\x03\x04 ws epub')
 
     def test_clean_patch_types(self):
         self.assertEqual(server.clean_patch({'fraction': True, 'hasCover': 1, 'cfi': None}), {'cfi': None})

@@ -18,7 +18,7 @@ trap 'kill $SERVER 2>/dev/null; rm -rf "$DATA"' EXIT
 for _ in $(seq 50); do curl -sf "http://127.0.0.1:$PORT/" >/dev/null && break; sleep 0.2; done
 
 specs=("$@")
-[ ${#specs[@]} -gt 0 ] || specs=(reader.mjs install.mjs)
+[ ${#specs[@]} -gt 0 ] || specs=(reader.mjs install.mjs passkey.mjs)
 status=0
 for spec in "${specs[@]}"; do
     echo "== $spec"

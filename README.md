@@ -2,14 +2,14 @@
 
 A self-hosted e-book reader that feels like a phone app. Select any word or passage while reading and a sheet slides up with its translation, the whole sentence translated, and dictionary entries, in the language you chose for that book.
 
-**Live:** https://reader.balu.party (public certificate, no CA to install) or https://reader.pi.local (local CA). Both are served by the Pi and reachable on the LAN only.
+**Live:** https://reader.balu.party, on a VPS behind Cloudflare. Accounts are by invitation (see Accounts).
 
 ## What it does
 
 - **Formats:** EPUB, MOBI, AZW3/KF8, FB2 (and .fb2.zip), CBZ, PDF, TXT, HTML. Rendering is [foliate-js](https://github.com/johnfactotum/foliate-js), the engine behind the Foliate reader.
-- **Accounts:** everyone signs in with a name and password and gets a private library. Books, reading positions and translation languages belong to the account, and appearance settings are remembered per account on each device. Anyone on the LAN can create an account from the sign-in screen.
-- **Free books:** a store screen (the shelf icon in the library, or "Browse free books" when it's empty) lists Project Gutenberg's public-domain books, most popular first. Search by title or author, filter by language, and tap **Get**: the Pi downloads the EPUB with its cover straight into your library. Gutenberg is rich in English, German and French but has only a few Russian and Romanian books.
-- **Library on the server:** uploads go to the Pi, so the same books and reading position show up on every device you sign in on. Each book reopens where you stopped; the library shows a Continue reading card and how far you are into every book. Covers, titles and authors come from the file.
+- **Accounts:** everyone signs in with a name and password and gets a private library. Books, reading positions and translation languages belong to the account, and appearance settings are remembered per account on each device. Accounts are created by the server's owner (`add-user`); after the first password sign-in, each device can add a **passkey** (Face ID, fingerprint or device PIN) and sign in with it from then on.
+- **Free books:** a store screen (the shelf icon in the library, or "Browse free books" when it's empty) lists Project Gutenberg's public-domain books, most popular first. Search by title or author, filter by language, and tap **Get**: the server downloads the EPUB with its cover straight into your library. Gutenberg is rich in English, German and French but has only a few Russian and Romanian books.
+- **Library on the server:** uploads go to the server, so the same books and reading position show up on every device you sign in on. Each book reopens where you stopped; the library shows a Continue reading card and how far you are into every book. Covers, titles and authors come from the file.
 - **Translation per book:** into English, Russian, Romanian or German. The first time you open a book it asks which; change it any time with the language chip in the top bar. The book's own language is detected (or set it in the same sheet).
 - **Lookup:** long-press to select on a phone, then tap **Translate**. On a desktop, double-click or drag-select and the sheet opens directly. You get:
   - the selection as it appears in the book, keeping paragraphs, line breaks, italics and bold
@@ -25,11 +25,11 @@ A self-hosted e-book reader that feels like a phone app. Select any word or pass
 
 ## API key (required for lookups)
 
-Lookups use Claude (`claude-sonnet-5-5` by default, with Anthropic's server-side fallback if it declines a passage). A Max plan includes $100 of API credits a month: on claude.ai go to Settings → Billing → API credits, link a Console organization, then create a key at platform.claude.com. Put it on the Pi:
+Lookups use Claude (`claude-sonnet-5-5` by default, with Anthropic's server-side fallback if it declines a passage). A Max plan includes $100 of API credits a month: on claude.ai go to Settings → Billing → API credits, link a Console organization, then create a key at platform.claude.com. Put it on the server (it asks for the key without showing it):
 
 ```bash
-ssh pihole 'echo "ANTHROPIC_API_KEY=sk-ant-..." | sudo tee /etc/context-reader.env >/dev/null \
-  && sudo chmod 600 /etc/context-reader.env && sudo systemctl restart context-reader'
+ssh -t vps 'read -rsp "Anthropic API key: " k && echo && printf "ANTHROPIC_API_KEY=%s\n" "$k" | sudo tee /etc/context-reader.env >/dev/null \
+  && sudo chmod 600 /etc/context-reader.env && sudo systemctl restart context-reader && echo saved'
 ```
 
 Add `READER_MODEL=claude-haiku-5-5` (about 20× cheaper) or another model to the same file to change it. Without a key the reader still works, but selecting text shows a message instead of a translation.
@@ -51,13 +51,15 @@ tests/               unit + browser tests (see Tests)
 ## Tests
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once: same anthropic SDK as the Pi
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once: same packages as the server
 .venv/bin/python -m unittest discover tests     # server: library, accounts, store, lookups (Claude streaming,
-                                                # Google for 1-2 words, cancel on close), all offline
+                                                # Google for 1-2 words, cancel on close), sign-up rules, throttling,
+                                                # passkeys (real signatures from a software authenticator), all offline
 node --test tests/*.test.mjs                    # TXT/HTML book adapter
 tests/e2e/run.sh                                # headless Chrome: every format, lookups (streaming, cancel,
                                                 # Google vs Claude), appearance, scroll mode, progress, store,
-                                                # accounts, home-screen install. Needs Google Chrome.
+                                                # accounts, home-screen install, passkeys (Chrome's virtual
+                                                # authenticator). Needs Google Chrome.
 ```
 
 The browser tests start the real server with fake Claude and Google (`tests/e2e/fake_server.py`) on a
@@ -65,34 +67,39 @@ throwaway data folder; only the store section goes online (to Project Gutenberg;
 Sample books in `tests/fixtures/books/` are Project Gutenberg public-domain editions plus a short folk tale.
 `deploy/deploy.sh` runs the unit tests before every deploy.
 
-API: `POST /api/auth/register|login|logout`, `GET /api/auth/me`, `GET/POST /api/books`, `GET/PATCH/DELETE /api/books/:id`, `GET /api/books/:id/file`, `GET/PUT /api/books/:id/cover`, `POST /api/lookup`, `GET /api/store?q=&lang=&page=`, `POST /api/store/:gutenbergId`, `GET /api/store/:gutenbergId/cover`, `GET /api/config`.
+API: `POST /api/auth/register|login|logout`, `POST /api/auth/passkey-options|passkey-add|passkey-remove|passkey-login-options|passkey-login`, `GET /api/auth/me`, `GET/POST /api/books`, `GET/PATCH/DELETE /api/books/:id`, `GET /api/books/:id/file`, `GET/PUT /api/books/:id/cover`, `POST /api/lookup`, `GET /api/store?q=&lang=&page=`, `POST /api/store/:gutenbergId`, `GET /api/store/:gutenbergId/cover`, `GET /api/config`.
 
 ## Accounts
 
 Passwords are hashed with scrypt; sessions are a long-lived HttpOnly cookie (one year). Data: `users.json` and `sessions.json` next to `library.json` in the data folder. Books uploaded before accounts existed belong to the first account created.
 
-Reset a forgotten password (also signs that account out everywhere):
-
-```bash
-ssh -t pihole 'cd ~/context-reader && READER_DATA=~/context-reader-data .venv/bin/python server.py set-password NAME'
-```
+- **Sign-ups:** `READER_SIGNUPS=closed` (set in `deploy/context-reader.service`) turns off "Create account" in the app. Without it, anyone who can reach the server can register.
+- **Create an account** (asks for the password twice):
+  ```bash
+  ssh -t vps 'sudo -u reader env READER_DATA=/var/lib/context-reader /srv/context-reader/.venv/bin/python /srv/context-reader/server.py add-user NAME'
+  ```
+- **Reset a forgotten password** (also signs that account out everywhere): the same command with `set-password NAME`.
+- **Passkeys** use the `webauthn` package. They're tied to the address they were made on (a passkey made on one address doesn't work on another), always ask for Face ID, fingerprint or PIN, and each challenge works once and expires after 5 minutes. Remove one under Account; also delete it from the password manager.
+- **Throttling:** 10 failed sign-ins (password or passkey) from one IP in 15 minutes block that IP for the rest of the window. Behind Caddy the client IP comes from the last `X-Forwarded-For` entry.
 
 ## Deploying
 
-Updates: `deploy/deploy.sh` runs the tests, rsyncs to `pihole:~/context-reader` and restarts the service. Data lives in `~/context-reader-data` and is never touched by deploys.
+Updates: `./deploy/deploy.sh vps` runs the tests, rsyncs to the server, installs `requirements.txt` and restarts the service. Data is never touched by deploys.
 
-First-time setup (already done on the Pi):
+How the VPS (Ubuntu 24.04, `ssh vps`) is set up:
 
-1. `python3 -m venv ~/context-reader/.venv && ~/context-reader/.venv/bin/pip install -r ~/context-reader/requirements.txt`
-2. `sudo cp deploy/context-reader.service /etc/systemd/system/ && sudo systemctl enable --now context-reader` (listens on 127.0.0.1:8095)
-3. Append `deploy/Caddyfile.snippet` to `/etc/caddy/Caddyfile`, then `sudo systemctl restart caddy`. A reload doesn't work because the Caddyfile has `admin off`.
-4. DNS: `sudo pihole-FTL --config dns.hosts` now includes `192.168.0.209 reader.pi.local`.
-5. Public certificate for `reader.balu.party`: Caddy runs an official build with the Cloudflare DNS module (`/usr/local/bin/caddy-cloudflare`, from caddyserver.com's build service) through the systemd override `deploy/caddy-cloudflare.conf`, which also drops `--environ` so the token never reaches the journal. The Cloudflare token lives in `/etc/caddy/cloudflare.env` (root only) and can only edit DNS for balu.party, which hosts nothing else. Pi-hole maps `reader.balu.party` to the Pi. To go back to the stock Caddy: `sudo rm /etc/systemd/system/caddy.service.d/cloudflare.conf`, remove the `*.balu.party` block, `sudo systemctl daemon-reload && sudo systemctl restart caddy`.
+- **Access:** SSH keys only, as the admin user `dbalutel` (passwordless sudo); root login and passwords are off (`/etc/ssh/sshd_config.d/00-hardening.conf`). fail2ban bans an IP for an hour after 5 failed SSH logins. Security updates install automatically.
+- **Firewall (ufw):** SSH from anywhere; ports 80/443 only from Cloudflare (`deploy/cloudflare-only.sh`, re-run it if Cloudflare's ranges change). Everything else is closed.
+- **App:** code in `/srv/context-reader` (owned by the admin user, `~/context-reader` links to it), data in `/var/lib/context-reader` (only the `reader` system user can read it). `deploy/context-reader.service` runs it as `reader` on 127.0.0.1:8095 with systemd sandboxing and sign-ups closed. The API key is in `/etc/context-reader.env` (root only).
+- **Caddy** (official apt repo): `deploy/Caddyfile` → `/etc/caddy/Caddyfile`. It gets and renews a Let's Encrypt certificate for `reader.balu.party` itself over port 80, through Cloudflare, and passes the visitor's real IP (Cloudflare's `CF-Connecting-IP`) to the app as `X-Real-IP`.
+- **Cloudflare:** `reader` A and AAAA records, proxied (DDoS protection, hides the server's IP); SSL/TLS mode **Full (strict)**, so Cloudflare checks the server's certificate. The free plan caps uploads at 100 MB, so the app does too.
+
+First-time setup on a fresh server, in short: create the `reader` user and the two folders, rsync the code, `python3 -m venv /srv/context-reader/.venv && /srv/context-reader/.venv/bin/pip install -r /srv/context-reader/requirements.txt`, copy the service file and Caddyfile into place, add the DNS records, then the API key and accounts.
 
 ## Known limits
 
 - Lookups need the internet and API credits. When the month's credits run out, lookups say so until they refresh.
 - DRM-protected Kindle/Adobe files can't be opened.
 - PDFs are shown as pages: themes invert colors in dark mode but don't reflow text.
-- Sign-up is open to anyone who can reach `reader.pi.local`. Each account only sees its own books.
 - There is no in-app way to delete an account or change a password yet (use `set-password` above).
+- Passkey sign-in needs HTTPS (or `localhost`), so it isn't offered on plain-HTTP addresses.

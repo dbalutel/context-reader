@@ -4,7 +4,9 @@
 Standard library plus the `anthropic` SDK: lookups (translation, the sentence, the meaning
 in context, dictionary notes) come from Claude and need ANTHROPIC_API_KEY.
 
+Create an account:           READER_DATA=... python3 server.py add-user NAME
 Reset a forgotten password:  READER_DATA=... python3 server.py set-password NAME
+Turn off sign-ups from the app with READER_SIGNUPS=closed (accounts then come from add-user).
 """
 import getpass
 import hashlib
@@ -32,7 +34,7 @@ BOOKS, COVERS, LIB = DATA / 'books', DATA / 'covers', DATA / 'library.json'
 USERS, SESSIONS = DATA / 'users.json', DATA / 'sessions.json'
 STORE_COVERS = DATA / 'store-covers'
 
-MAX_BOOK = 300 * 1024 * 1024
+MAX_BOOK = 100 * 1000 * 1000  # Cloudflare's free plan refuses larger uploads
 MAX_COVER = 8 * 1024 * 1024
 MAX_JSON = 64 * 1024
 ID_RE = re.compile(r'^[a-f0-9]{16}$')
@@ -50,6 +52,8 @@ LOCK = threading.Lock()
 
 AI_MODEL = os.environ.get('READER_MODEL', 'claude-sonnet-5-5')
 AI_ENABLED = bool(os.environ.get('ANTHROPIC_API_KEY')) and importlib.util.find_spec('anthropic') is not None
+SIGNUPS = os.environ.get('READER_SIGNUPS', 'open') != 'closed'
+PASSKEYS = importlib.util.find_spec('webauthn') is not None
 
 MIME = {
     '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -112,7 +116,59 @@ def token_key(token):
 
 
 def public_user(user):
-    return {'id': user['id'], 'name': user['name']}
+    passkeys = [{k: pk.get(k) for k in ('id', 'name', 'created', 'lastUsed')} for pk in user.get('passkeys', [])]
+    return {'id': user['id'], 'name': user['name'], 'passkeys': passkeys}
+
+
+# Failed sign-ins per client IP: after MAX_FAILS in FAIL_WINDOW seconds that IP must wait.
+FAILS = {}
+MAX_FAILS, FAIL_WINDOW = 10, 15 * 60
+
+
+def throttled(ip):
+    recent = [t for t in FAILS.get(ip, ()) if time.time() - t < FAIL_WINDOW]
+    if recent:
+        FAILS[ip] = recent
+    else:
+        FAILS.pop(ip, None)
+    return len(recent) >= MAX_FAILS
+
+
+def note_failure(ip):
+    if len(FAILS) > 10000:
+        FAILS.clear()  # bounded memory under a many-IP flood
+    FAILS.setdefault(ip, []).append(time.time())
+
+
+# ---------- passkeys (WebAuthn, via the `webauthn` package) ----------
+
+CHALLENGES = {}  # challenge (base64url) -> (purpose, user id, expiry); each works once
+
+
+def issue_challenge(purpose, user_id=None):
+    from webauthn.helpers import bytes_to_base64url
+    now = time.time()
+    for k, v in list(CHALLENGES.items()):
+        if v[2] < now:
+            CHALLENGES.pop(k, None)
+    challenge = secrets.token_bytes(32)
+    CHALLENGES[bytes_to_base64url(challenge)] = (purpose, user_id, now + 300)
+    return challenge
+
+
+def take_challenge(credential, purpose, user_id=None):
+    """The challenge this passkey response answers, if the server issued it for this purpose and user."""
+    from webauthn.helpers import base64url_to_bytes
+    try:
+        sent = json.loads(base64url_to_bytes(credential['response']['clientDataJSON']))['challenge']
+    except (KeyError, TypeError, ValueError):
+        raise ValueError('That passkey response is malformed.')
+    if not isinstance(sent, str):
+        raise ValueError('That passkey response is malformed.')
+    entry = CHALLENGES.pop(sent, None)
+    if not entry or entry[:2] != (purpose, user_id) or entry[2] < time.time():
+        return None
+    return base64url_to_bytes(sent)
 
 
 def add_to_library(owner, filename, path, **fields):
@@ -345,6 +401,7 @@ STORE_LANGS = ('en', 'de', 'fr', 'es', 'it', 'ru', 'ro')
 LANG_BY_NAME = {'English': 'en', 'German': 'de', 'French': 'fr', 'Spanish': 'es', 'Italian': 'it',
                 'Russian': 'ru', 'Romanian': 'ro', 'Portuguese': 'pt', 'Dutch': 'nl', 'Latin': 'la', 'Finnish': 'fi'}
 ATOM = {'a': 'http://www.w3.org/2005/Atom'}
+WIKISOURCE_LANGS = ('ru', 'ro')  # Gutenberg has few books in these; Wikisource has the classics
 _store_cache = {}  # (q, lang, page) -> (time, result)
 
 
@@ -365,7 +422,7 @@ def parse_opds(xml_bytes, lang):
         suffix = re.search(r'\s*\(([A-Za-z]+)\)$', title)
         if suffix and suffix.group(1) in LANG_BY_NAME:
             language, title = LANG_BY_NAME[suffix.group(1)], title[:suffix.start()]
-        books.append({'id': int(m.group(1)), 'title': title, 'language': language,
+        books.append({'id': int(m.group(1)), 'source': f'gutenberg:{m.group(1)}', 'title': title, 'language': language,
                       'author': (entry.findtext('a:content', '', ATOM) or '').strip()})
     more = any(link.get('rel') == 'next' for link in root.findall('a:link', ATOM))
     return {'books': books, 'more': more}
@@ -387,6 +444,30 @@ def store_search(q, lang, page):
     return result
 
 
+def wikisource_search(q, lang):
+    """Whole works on {lang}.wikisource.org matching `q` (no chapters, encyclopedia entries or disambiguation pages)."""
+    key = ('wikisource', q.casefold(), lang)
+    hit = _store_cache.get(key)
+    if hit and time.time() - hit[0] < 6 * 3600:
+        return hit[1]
+    url = f'https://{lang}.wikisource.org/w/api.php?' + urllib.parse.urlencode({
+        'action': 'query', 'generator': 'search', 'gsrsearch': q, 'gsrnamespace': 0, 'gsrlimit': 30,
+        'prop': 'pageprops', 'ppprop': 'disambiguation', 'format': 'json', 'formatversion': 2})
+    with http_get(url) as res:
+        pages = json.loads(res.read(MAX_JSON * 32)).get('query', {}).get('pages', [])
+    books = []
+    for page in sorted(pages, key=lambda p: p.get('index', 0)):
+        name = page['title']
+        if '/' in name or 'pageprops' in page:  # subpages (chapters, encyclopedia articles) and disambiguation
+            continue
+        m = re.fullmatch(r'(.+?)\s*\(([^()]+)\)', name)  # "Война и мир (Толстой)", "Садко (А. К. Толстой; перевод)"
+        title, author = (m.group(1), m.group(2).split(';')[0].strip()) if m else (name, '')
+        books.append({'id': name, 'source': f'wikisource:{lang}:{name}', 'title': title, 'author': author,
+                      'language': lang, 'provider': 'Wikisource'})
+    _store_cache[key] = (time.time(), books)
+    return books
+
+
 def store_cover(gid):
     """Gutenberg's cover image for book `gid`, cached on disk; None when it has none."""
     path = STORE_COVERS / f'{gid}.jpg'
@@ -404,26 +485,35 @@ def store_cover(gid):
     return data or None
 
 
+def save_epub(url, dest, timeout=60):
+    """Stream an EPUB from `url` to `dest`, refusing anything too large or not a zip."""
+    with http_get(url, timeout=timeout) as res, open(dest, 'wb') as f:
+        total = 0
+        while chunk := res.read(1 << 20):
+            total += len(chunk)
+            if total > MAX_BOOK:
+                raise ValueError('book too large')
+            f.write(chunk)
+    with open(dest, 'rb') as f:
+        if f.read(4) != b'PK\x03\x04':
+            raise ValueError('not an EPUB')
+
+
 def download_epub(gid, dest):
     """Save Gutenberg book `gid` as EPUB at `dest`, trying the richest format first."""
     for variant in ('epub3.images', 'epub.images', 'epub.noimages'):
         try:
-            with http_get(f'{GUTENBERG}/ebooks/{gid}.{variant}', timeout=60) as res, open(dest, 'wb') as f:
-                total = 0
-                while chunk := res.read(1 << 20):
-                    total += len(chunk)
-                    if total > MAX_BOOK:
-                        raise ValueError('book too large')
-                    f.write(chunk)
+            return save_epub(f'{GUTENBERG}/ebooks/{gid}.{variant}', dest)
         except urllib.error.HTTPError as e:
-            if e.code == 404:
-                continue
-            raise
-        with open(dest, 'rb') as f:
-            if f.read(4) == b'PK\x03\x04':
-                return
-        raise ValueError('not an EPUB')
+            if e.code != 404:
+                raise
     raise FileNotFoundError(f'Gutenberg has no EPUB for book {gid}')
+
+
+def download_wikisource(lang, page, dest):
+    """A whole Wikisource work (all its chapters) as EPUB, built by Wikimedia's export tool (War and Peace takes ~5 s)."""
+    save_epub('https://ws-export.wmcloud.org/?' + urllib.parse.urlencode(
+        {'lang': lang, 'page': page, 'format': 'epub-3'}), dest, timeout=180)
 
 
 # ---------- HTTP ----------
@@ -485,7 +575,7 @@ class Handler(BaseHTTPRequestHandler):
         if parts[:1] != ['api']:
             return self.static(path) if m in ('GET', 'HEAD') else self.error(405, 'method not allowed')
         if parts == ['api', 'config'] and m == 'GET':
-            return self.send(200, {'ai': AI_ENABLED, 'targets': TARGET_LANGS})
+            return self.send(200, {'ai': AI_ENABLED, 'targets': TARGET_LANGS, 'signups': SIGNUPS, 'passkeys': PASSKEYS})
         if parts[:2] == ['api', 'auth'] and len(parts) == 3 and m in ('GET', 'POST'):
             return self.auth(parts[2])
         if not self.user:
@@ -498,6 +588,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.upload()
         if parts == ['api', 'store'] and m == 'GET':
             return self.store_search()
+        if parts == ['api', 'store', 'wikisource'] and m == 'POST':
+            return self.wikisource_add()
         if parts[:2] == ['api', 'store'] and len(parts) in (3, 4):
             if not re.fullmatch(r'\d{1,7}', parts[2]):
                 return self.error(404, 'not found')
@@ -542,12 +634,16 @@ class Handler(BaseHTTPRequestHandler):
                     if sessions.pop(token_key(token), None):
                         save_json(SESSIONS, sessions)
             return self.send(204, headers=self.cookie('', 0))
-        if action not in ('login', 'register'):
+        if action.startswith('passkey-') and PASSKEYS and self.command == 'POST':
+            return self.passkey(action)
+        if action not in ('login', 'register') or self.command != 'POST':
             return self.error(404, 'not found')
         p = self.json_body()
         name, password = str(p.get('name', '')).strip(), str(p.get('password', ''))
         key = name.casefold()
         if action == 'register':
+            if not SIGNUPS:
+                return self.error(403, "New accounts can't be created here. Ask the person who runs this reader for one.")
             if not NAME_RE.match(name):
                 return self.error(400, 'Use up to 32 letters, numbers, spaces, dots or dashes for your name.')
             if len(password) < 6:
@@ -566,16 +662,122 @@ class Handler(BaseHTTPRequestHandler):
                         meta.setdefault('owner', user['id'])
                     save_lib(lib)
         else:
+            ip = self.client_ip()
+            if throttled(ip):
+                return self.error(429, 'Too many failed sign-ins. Try again in 15 minutes.')
             user = load_json(USERS).get(key)
             if not user or not check_password(user, password):
+                note_failure(ip)
                 time.sleep(0.5)  # slows password guessing
                 return self.error(401, 'Wrong name or password.')
+        return self.start_session(user)
+
+    def start_session(self, user):
         token = secrets.token_urlsafe(32)
         with LOCK:
             sessions = load_json(SESSIONS)
             sessions[token_key(token)] = {'user': user['id'], 'created': time.time() * 1000}
             save_json(SESSIONS, sessions)
         return self.send(200, {'user': public_user(user)}, headers=self.cookie(token, SESSION_DAYS * 86400))
+
+    def client_ip(self):
+        # Caddy sets X-Real-IP to the visitor's address (from Cloudflare's CF-Connecting-IP when proxied)
+        # and otherwise appends it to X-Forwarded-For; the server itself only listens on localhost
+        forwarded = self.headers.get('X-Forwarded-For')
+        return (self.headers.get('X-Real-IP') or (forwarded.split(',')[-1].strip() if forwarded else '')
+                or self.client_address[0])
+
+    def relying_party(self):
+        """The passkey domain and origin: the address the browser used, as Caddy passed it on."""
+        host = self.headers.get('Host', '')
+        proto = 'https' if self.headers.get('X-Forwarded-Proto') == 'https' else 'http'
+        return urllib.parse.urlsplit(f'//{host}').hostname or '', f'{proto}://{host}'
+
+    def passkey(self, action):
+        import webauthn
+        from webauthn.helpers import base64url_to_bytes, bytes_to_base64url, structs
+        from webauthn.helpers.exceptions import WebAuthnException
+        rp_id, origin = self.relying_party()
+        required = structs.UserVerificationRequirement.REQUIRED  # Face ID, fingerprint or device PIN every time
+        if action == 'passkey-login-options':
+            options = webauthn.generate_authentication_options(
+                rp_id=rp_id, challenge=issue_challenge('login'), user_verification=required)
+            return self.send(200, webauthn.options_to_json(options))
+        if action == 'passkey-login':
+            ip = self.client_ip()
+            if throttled(ip):
+                return self.error(429, 'Too many failed sign-ins. Try again in 15 minutes.')
+            cred = self.json_body().get('credential')
+            challenge = take_challenge(cred, 'login')
+            if not challenge:
+                return self.error(400, 'The passkey request expired. Try again.')
+            found = next(((key, pk) for key, u in load_json(USERS).items()
+                          for pk in u.get('passkeys', []) if pk['id'] == cred.get('id')), None)
+            if not found:
+                note_failure(ip)
+                return self.error(401, "This passkey isn't set up here. Sign in with your password, then add it under Account.")
+            key, pk = found
+            try:
+                verified = webauthn.verify_authentication_response(
+                    credential=cred, expected_challenge=challenge, expected_rp_id=rp_id, expected_origin=origin,
+                    credential_public_key=base64url_to_bytes(pk['key']), credential_current_sign_count=pk['count'],
+                    require_user_verification=True)
+            except WebAuthnException as e:
+                note_failure(ip)
+                print('passkey sign-in rejected:', e, flush=True)
+                return self.error(401, "That passkey couldn't be verified. Try again, or sign in with your password.")
+            with LOCK:
+                users = load_json(USERS)
+                user = users[key]
+                for stored in user.get('passkeys', []):
+                    if stored['id'] == pk['id']:
+                        stored['count'], stored['lastUsed'] = verified.new_sign_count, time.time() * 1000
+                save_json(USERS, users)
+            return self.start_session(user)
+
+        if not self.user:
+            return self.error(401, 'Sign in to continue.')
+        key = self.user['name'].casefold()
+        if action == 'passkey-options':
+            options = webauthn.generate_registration_options(
+                rp_id=rp_id, rp_name='Context Reader', user_name=self.user['name'], user_id=self.user['id'].encode(),
+                challenge=issue_challenge('add', self.user['id']),
+                authenticator_selection=structs.AuthenticatorSelectionCriteria(
+                    resident_key=structs.ResidentKeyRequirement.REQUIRED, user_verification=required),
+                exclude_credentials=[structs.PublicKeyCredentialDescriptor(id=base64url_to_bytes(pk['id']))
+                                     for pk in self.user.get('passkeys', [])])
+            return self.send(200, webauthn.options_to_json(options))
+        if action == 'passkey-add':
+            p = self.json_body()
+            cred = p.get('credential')
+            challenge = take_challenge(cred, 'add', self.user['id'])
+            if not challenge:
+                return self.error(400, 'The passkey request expired. Try again.')
+            try:
+                verified = webauthn.verify_registration_response(
+                    credential=cred, expected_challenge=challenge, expected_rp_id=rp_id, expected_origin=origin,
+                    require_user_verification=True)
+            except WebAuthnException as e:
+                print('passkey not added:', e, flush=True)
+                return self.error(400, "That passkey couldn't be added. Try again.")
+            pk = {'id': bytes_to_base64url(verified.credential_id), 'key': bytes_to_base64url(verified.credential_public_key),
+                  'count': verified.sign_count, 'name': str(p.get('name') or 'Passkey').strip()[:40],
+                  'created': time.time() * 1000}
+            with LOCK:
+                users = load_json(USERS)
+                if any(x['id'] == pk['id'] for u in users.values() for x in u.get('passkeys', [])):
+                    return self.error(409, 'This passkey is already set up.')
+                users[key].setdefault('passkeys', []).append(pk)
+                save_json(USERS, users)
+            return self.send(200, {'user': public_user(users[key])})
+        if action == 'passkey-remove':
+            pk_id = str(self.json_body().get('id', ''))
+            with LOCK:
+                users = load_json(USERS)
+                users[key]['passkeys'] = [pk for pk in users[key].get('passkeys', []) if pk['id'] != pk_id]
+                save_json(USERS, users)
+            return self.send(200, {'user': public_user(users[key])})
+        return self.error(404, 'not found')
 
     def own(self, lib, book_id):
         meta = lib.get(book_id)
@@ -589,7 +791,8 @@ class Handler(BaseHTTPRequestHandler):
         st = file.stat()
         etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
         immutable = rel.startswith(('vendor/', 'fonts/'))
-        headers = {'ETag': etag, 'Cache-Control': 'public, max-age=604800' if immutable else 'no-cache'}
+        # private: Cloudflare would otherwise swap no-cache for its 4-hour default and keep old app versions around
+        headers = {'ETag': etag, 'Cache-Control': 'public, max-age=604800' if immutable else 'private, no-cache'}
         if file.suffix == '.html':
             headers['Content-Security-Policy'] = CSP
         if rel == 'sw.js':
@@ -609,7 +812,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.error(415, 'This file type is not supported.')
         length = int(self.headers.get('Content-Length') or 0)
         if not 0 < length <= MAX_BOOK:
-            return self.error(413, 'Books must be smaller than 300 MB.')
+            return self.error(413, 'Books must be smaller than 100 MB.')
         book_id = secrets.token_hex(8)
         dest = BOOKS / f'{book_id}{ext.group(1).lower()}'
         tmp = dest.with_suffix('.part')
@@ -639,9 +842,13 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             print('store search failed:', repr(e), flush=True)
             return self.error(502, 'Project Gutenberg could not be reached. Try again in a moment.')
+        if q and lang in WIKISOURCE_LANGS and page == '1':
+            try:
+                result = {**result, 'books': result['books'] + wikisource_search(q, lang)}
+            except Exception as e:  # Gutenberg's results still show
+                print('wikisource search failed:', repr(e), flush=True)
         owned = {b.get('source') for b in load_lib().values() if b.get('owner') == self.user['id']}
-        for book in result['books']:
-            book['owned'] = f'gutenberg:{book["id"]}' in owned
+        result = {**result, 'books': [{**book, 'owned': book['source'] in owned} for book in result['books']]}
         return self.send(200, result)
 
     def store_cover(self, gid):
@@ -653,24 +860,41 @@ class Handler(BaseHTTPRequestHandler):
             return self.error(404, 'no cover')
         return self.send(200, data, 'image/jpeg', {'Cache-Control': 'private, max-age=604800'})
 
-    def store_add(self, gid):
-        p = self.json_body()
-        source = f'gutenberg:{gid}'
+    def store_import(self, source, filename, fetch, title, author, lang, site):
+        """Download a store book into this account's library once; returns (meta, created) or None after an error reply."""
         mine = [b for b in load_lib().values() if b.get('owner') == self.user['id']]
         existing = next((b for b in mine if b.get('source') == source), None)
         if existing:
-            return self.send(200, existing)
+            return existing, False
         dest = BOOKS / f'{secrets.token_hex(8)}.epub'
         try:
-            download_epub(gid, dest)
+            fetch(dest)
         except Exception as e:
             dest.unlink(missing_ok=True)
-            print('store download failed:', gid, repr(e), flush=True)
-            return self.error(502, 'This book could not be downloaded from Project Gutenberg.')
-        lang = str(p.get('language', ''))
-        meta = add_to_library(self.user['id'], f'pg{gid}.epub', dest, source=source,
-                              title=str(p.get('title') or f'Gutenberg #{gid}')[:300], author=str(p.get('author', ''))[:300],
-                              language=lang if lang in STORE_LANGS else '')
+            print('store download failed:', source, repr(e), flush=True)
+            self.error(502, f'This book could not be downloaded from {site}.')
+            return None
+        return add_to_library(self.user['id'], filename, dest, source=source, title=title[:300], author=author[:300],
+                              language=lang if lang in STORE_LANGS else ''), True
+
+    def wikisource_add(self):
+        p = self.json_body()
+        lang, page = str(p.get('lang', '')), str(p.get('page', '')).strip()
+        if lang not in WIKISOURCE_LANGS or not 0 < len(page) <= 255 or '/' in page:
+            raise ValueError('invalid Wikisource page')
+        done = self.store_import(f'wikisource:{lang}:{page}', 'wikisource.epub',
+                                 lambda dest: download_wikisource(lang, page, dest),
+                                 str(p.get('title') or page), str(p.get('author', '')), lang, 'Wikisource')
+        return done and self.send(201 if done[1] else 200, done[0])
+
+    def store_add(self, gid):
+        p = self.json_body()
+        done = self.store_import(f'gutenberg:{gid}', f'pg{gid}.epub', lambda dest: download_epub(gid, dest),
+                                 str(p.get('title') or f'Gutenberg #{gid}'), str(p.get('author', '')),
+                                 str(p.get('language', '')), 'Project Gutenberg')
+        if not done or not done[1]:
+            return done and self.send(200, done[0])
+        meta = done[0]
         try:
             cover = store_cover(gid)
         except Exception:
@@ -787,6 +1011,26 @@ def main():
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
+def add_user(name):
+    if not NAME_RE.match(name):
+        sys.exit('Use up to 32 letters, numbers, spaces, dots or dashes for the name.')
+    with LOCK:
+        users = load_json(USERS)
+        if name.casefold() in users:
+            sys.exit(f'{name!r} already exists. To reset its password: set-password {name}')
+        password = getpass.getpass(f'Password for {name}: ')
+        if len(password) < 6:
+            sys.exit('Use a password with at least 6 characters.')
+        if getpass.getpass('Same password again: ') != password:
+            sys.exit("The passwords don't match.")
+        user = {'id': secrets.token_hex(8), 'name': name, 'created': time.time() * 1000}
+        set_user_password(user, password)
+        users[name.casefold()] = user
+        DATA.mkdir(parents=True, exist_ok=True)
+        save_json(USERS, users)
+    print(f'Created {name}. They can sign in now, then add a passkey under Account.')
+
+
 def set_password(name):
     with LOCK:
         users = load_json(USERS)
@@ -806,5 +1050,7 @@ def set_password(name):
 if __name__ == '__main__':
     if sys.argv[1:2] == ['set-password'] and len(sys.argv) == 3:
         set_password(sys.argv[2])
+    elif sys.argv[1:2] == ['add-user'] and len(sys.argv) == 3:
+        add_user(sys.argv[2])
     else:
         main()

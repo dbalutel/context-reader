@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Ship the app to the Pi and restart it. First-time setup (venv, service, Caddy, DNS) is in README.md.
+# Ship the app to a server and restart it (./deploy/deploy.sh [HOST], default vps). First-time setup (venv, service, Caddy, DNS) is in README.md.
 set -euo pipefail
-HOST=${1:-pihole}
+HOST=${1:-vps}
 cd "$(dirname "$0")/.."
 # unit tests run with the same anthropic SDK as the Pi (requirements.txt) in a local .venv
 [ -x .venv/bin/python ] || { python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt; }
@@ -9,4 +9,4 @@ cd "$(dirname "$0")/.."
 node --test tests/*.test.mjs >/dev/null
 rsync -az --delete --exclude .git --exclude data --exclude .venv --exclude '__pycache__' \
     --exclude tests/e2e/node_modules --exclude tests/e2e/shots --exclude tests/fixtures ./ "$HOST":context-reader/
-ssh "$HOST" 'sudo systemctl restart context-reader && sleep 1 && systemctl is-active context-reader'
+ssh "$HOST" 'context-reader/.venv/bin/pip install -q -r context-reader/requirements.txt && sudo systemctl restart context-reader && sleep 1 && systemctl is-active context-reader'

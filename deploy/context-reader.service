@@ -3,22 +3,36 @@ Description=Context Reader (e-book reader with in-context translation)
 After=network-online.target
 Wants=network-online.target
 
+# Layout: code in /srv/context-reader (written by deploy.sh as the admin user, read-only to the app),
+# data in /var/lib/context-reader (only the app's own `reader` user can read it).
 [Service]
-User=pi
-WorkingDirectory=/home/pi/context-reader
-Environment=READER_DATA=/home/pi/context-reader-data
+User=reader
+Group=reader
+WorkingDirectory=/srv/context-reader
+Environment=READER_DATA=/var/lib/context-reader
 Environment=READER_HOST=127.0.0.1
 Environment=READER_PORT=8095
+# accounts come from `server.py add-user NAME`, not from the sign-in screen
+Environment=READER_SIGNUPS=closed
 # ANTHROPIC_API_KEY=... (required for lookups) and optional READER_MODEL=...
 EnvironmentFile=-/etc/context-reader.env
-ExecStart=/home/pi/context-reader/.venv/bin/python server.py
+ExecStart=/srv/context-reader/.venv/bin/python server.py
 Restart=on-failure
 RestartSec=3
+
 NoNewPrivileges=yes
 PrivateTmp=yes
+PrivateDevices=yes
 ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/home/pi/context-reader-data
+ProtectHome=yes
+ReadWritePaths=/var/lib/context-reader
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

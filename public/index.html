@@ -51,6 +51,7 @@
       <p id="auth-error" class="auth-error" role="alert" hidden></p>
       <button id="auth-submit" class="btn btn-ink btn-block" type="submit">Sign in</button>
     </form>
+    <button id="auth-passkey" class="btn btn-soft btn-block auth-passkey" type="button" hidden>Sign in with a passkey</button>
   </div>
 </main>
 
@@ -250,6 +251,12 @@
   <div class="grip" aria-hidden="true"></div>
   <div class="sheet-body">
     <div class="bk-head"><span id="acct-avatar" class="avatar big" aria-hidden="true"></span><div><h2 id="acct-name"></h2><p>Your library, reading positions and translation languages are private to this account.</p></div></div>
+    <section id="acct-passkeys" class="acct-passkeys" aria-labelledby="pk-title" hidden>
+      <h3 id="pk-title">Passkeys</h3>
+      <p>Sign in with Face ID, a fingerprint or your device PIN instead of your password.</p>
+      <ul id="pk-list" class="pk-list"></ul>
+      <button id="pk-add" class="list-btn" type="button">Add a passkey for this device</button>
+    </section>
     <button id="acct-install" class="list-btn" type="button" hidden>Install app on this device</button>
     <button id="acct-logout" class="list-btn" type="button">Sign out</button>
   </div>

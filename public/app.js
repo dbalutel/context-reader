@@ -286,7 +286,9 @@ const shrinkCover = async blob => {
     return new Promise(r => canvas.toBlob(r, 'image/jpeg', .85))
 }
 
+const MAX_BOOK = 100 * 1000 * 1000 // same limit as the server
 const xhrUpload = (file, onProgress) => new Promise((resolve, reject) => {
+    if (file.size > MAX_BOOK) return reject(new Error('Books must be smaller than 100 MB.'))
     const xhr = new XMLHttpRequest()
     xhr.open('POST', '/api/books')
     xhr.setRequestHeader('X-Filename', encodeURIComponent(file.name))
@@ -945,10 +947,10 @@ const STORE_LANGS = [['en', 'English'], ['de', 'Deutsch'], ['fr', 'Français'], 
     ['ru', 'Русский'], ['ro', 'Română'], ['', 'All languages']]
 const storeEl = $('#store')
 const storeList = $('#store-list')
-const storeState = { q: '', lang: 'en', page: 1, seq: 0, loaded: false }
+const storeState = { q: '', lang: 'en', page: 1, seq: 0, loaded: false, anyLang: false }
 
-const readOwned = gid => {
-    const id = books.find(x => x.source === `gutenberg:${gid}`)?.id
+const readOwned = source => {
+    const id = books.find(x => x.source === source)?.id
     if (!id) return
     back() // close the store first, so Back from the book returns to the library
     setTimeout(() => openBook(id), 60)
@@ -956,16 +958,21 @@ const readOwned = gid => {
 
 const storeCard = b => {
     const btn = h('button', { class: `get-btn${b.owned ? ' owned' : ''}`, type: 'button' }, b.owned ? 'Read' : 'Get')
-    const img = h('img', { src: `/api/store/${b.id}/cover`, alt: '', loading: 'lazy', decoding: 'async' })
-    const cover = h('div', { class: 'cover' }, img)
-    img.addEventListener('error', () => cover.replaceChildren(genCover(b)), { once: true })
+    const wiki = b.source.startsWith('wikisource:')
+    const cover = h('div', { class: 'cover' })
+    if (wiki) cover.append(genCover(b)) // Wikisource has no covers
+    else {
+        const img = h('img', { src: `/api/store/${b.id}/cover`, alt: '', loading: 'lazy', decoding: 'async' })
+        img.addEventListener('error', () => cover.replaceChildren(genCover(b)), { once: true })
+        cover.append(img)
+    }
     btn.addEventListener('click', async () => {
-        if (b.owned) return readOwned(b.id)
+        if (b.owned) return readOwned(b.source)
         btn.disabled = true
         btn.textContent = 'Adding…'
         try {
-            const meta = await api(`/api/store/${b.id}`, { method: 'POST',
-                body: JSON.stringify({ title: b.title, author: b.author, language: b.language }) })
+            const meta = await api(wiki ? '/api/store/wikisource' : `/api/store/${b.id}`, { method: 'POST',
+                body: JSON.stringify({ title: b.title, author: b.author, language: b.language, lang: b.language, page: b.id }) })
             books = [meta, ...books.filter(x => x.id !== meta.id)]
             b.owned = true
             btn.textContent = 'Read'
@@ -977,19 +984,26 @@ const storeCard = b => {
         } finally { btn.disabled = false }
     })
     return h('li', { class: 'book store-book' }, cover,
-        h('p', { class: 'b-title' }, b.title), h('p', { class: 'b-author' }, b.author || '\u00a0'), btn)
+        h('p', { class: 'b-title' }, b.title), h('p', { class: 'b-author' }, b.author || '\u00a0'),
+        storeState.anyLang && b.language ? h('p', { class: 'b-lang' }, langName(b.language) || b.language) : null,
+        wiki ? h('p', { class: 'b-lang' }, 'Wikisource') : null, btn)
 }
 
 const searchStore = async reset => {
     const status = $('#store-status')
     const more = $('#store-more')
-    if (reset) { storeState.page = 1; storeList.replaceChildren() }
+    if (reset) { storeState.page = 1; storeState.anyLang = false; storeList.replaceChildren() }
     const seq = ++storeState.seq
     status.textContent = reset ? 'Loading…' : ''
     more.hidden = true
+    const load = () => api(`/api/store?${new URLSearchParams({ q: storeState.q, lang: storeState.anyLang ? '' : storeState.lang, page: storeState.page })}`)
     try {
-        const params = new URLSearchParams({ q: storeState.q, lang: storeState.lang, page: storeState.page })
-        const res = await api(`/api/store?${params}`)
+        let res = await load()
+        // titles differ between languages (Don Quijote, Don Quixote): if nothing matches here, look in all of them
+        if (reset && storeState.q && !res.books.length && seq === storeState.seq) {
+            storeState.anyLang = true
+            res = await load()
+        }
         if (seq !== storeState.seq) return
         storeList.append(...res.books.map(storeCard))
         storeState.loaded = true
@@ -997,8 +1011,9 @@ const searchStore = async reset => {
         const name = STORE_LANGS.find(([c]) => c === storeState.lang)?.[1]
         status.textContent = !storeList.children.length
             ? (storeState.q ? `No books found for “${storeState.q}”.` : 'No books in this language yet.')
+            : storeState.anyLang && storeState.page === 1 ? `Nothing in ${name} for “${storeState.q}”. Showing all languages.`
             : !res.more && storeState.page === 1 && !storeState.q && res.books.length < 25
-                ? `Project Gutenberg has only a few books in ${name}.` : ''
+                ? `Project Gutenberg has only a few books in ${name}.${['ru', 'ro'].includes(storeState.lang) ? ' Search by title or author to find more on Wikisource.' : ''}` : ''
     } catch (e) {
         if (seq === storeState.seq) status.textContent = e.message
     }
@@ -1084,6 +1099,80 @@ const setAuthMode = mode => {
 }
 for (const b of authEl.querySelectorAll('[data-mode]')) b.addEventListener('click', () => setAuthMode(b.dataset.mode))
 
+// ---------- passkeys ----------
+
+const b64u = {
+    enc: buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+    dec: s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)),
+}
+// what the server's WebAuthn library reads: binary fields as base64url
+const credentialJSON = cred => {
+    const r = cred.response
+    return {
+        id: cred.id, rawId: b64u.enc(cred.rawId), type: cred.type,
+        authenticatorAttachment: cred.authenticatorAttachment ?? undefined,
+        clientExtensionResults: cred.getClientExtensionResults?.() ?? {},
+        response: r.attestationObject
+            ? { clientDataJSON: b64u.enc(r.clientDataJSON), attestationObject: b64u.enc(r.attestationObject), transports: r.getTransports?.() ?? [] }
+            : { clientDataJSON: b64u.enc(r.clientDataJSON), authenticatorData: b64u.enc(r.authenticatorData),
+                signature: b64u.enc(r.signature), userHandle: r.userHandle ? b64u.enc(r.userHandle) : undefined },
+    }
+}
+const deviceName = () => {
+    const ua = navigator.userAgent
+    return /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iPad'
+        : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'Passkey'
+}
+// cancelling the system prompt is not an error worth showing
+const passkeyError = e => ['NotAllowedError', 'AbortError'].includes(e.name) ? null
+    : e.name === 'InvalidStateError' ? 'This device already has a passkey for your account.' : e.message
+let config = {}
+const passkeysOK = () => !!(config.passkeys && window.PublicKeyCredential && isSecureContext)
+
+$('#auth-passkey').addEventListener('click', async () => {
+    const btn = $('#auth-passkey')
+    btn.disabled = true
+    $('#auth-error').hidden = true
+    try {
+        const o = await api('/api/auth/passkey-login-options', { method: 'POST' })
+        const cred = await navigator.credentials.get({ publicKey: { ...o, challenge: b64u.dec(o.challenge), allowCredentials: [] } })
+        const { user } = await api('/api/auth/passkey-login', { method: 'POST', body: JSON.stringify({ credential: credentialJSON(cred) }) })
+        enterApp(user)
+    } catch (err) {
+        const msg = passkeyError(err)
+        if (msg) { $('#auth-error').textContent = msg; $('#auth-error').hidden = false }
+    } finally { btn.disabled = false }
+})
+
+const dateFmt = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+const renderPasskeys = () => {
+    $('#acct-passkeys').hidden = !passkeysOK()
+    $('#pk-list').replaceChildren(...(me?.passkeys ?? []).map(pk => h('li', {},
+        h('span', {}, pk.name, h('small', {}, `Added ${dateFmt.format(pk.created)}`)),
+        h('button', { type: 'button', 'aria-label': `Remove passkey ${pk.name}`, onclick: async () => {
+            try {
+                me = (await api('/api/auth/passkey-remove', { method: 'POST', body: JSON.stringify({ id: pk.id }) })).user
+                renderPasskeys()
+                toast('Passkey removed. Also delete it from your password manager.')
+            } catch (err) { toast(err.message) }
+        } }, 'Remove'))))
+}
+$('#pk-add').addEventListener('click', async () => {
+    try {
+        const o = await api('/api/auth/passkey-options', { method: 'POST' })
+        const cred = await navigator.credentials.create({ publicKey: {
+            ...o, challenge: b64u.dec(o.challenge), user: { ...o.user, id: b64u.dec(o.user.id) },
+            excludeCredentials: (o.excludeCredentials ?? []).map(c => ({ ...c, id: b64u.dec(c.id) })),
+        } })
+        me = (await api('/api/auth/passkey-add', { method: 'POST', body: JSON.stringify({ credential: credentialJSON(cred), name: deviceName() }) })).user
+        renderPasskeys()
+        toast('Passkey added. Use it next time you sign in.')
+    } catch (err) {
+        const msg = passkeyError(err)
+        if (msg) toast(msg)
+    }
+})
+
 $('#auth-form').addEventListener('submit', async e => {
     e.preventDefault()
     const btn = $('#auth-submit')
@@ -1130,6 +1219,7 @@ const enterApp = user => {
 $('#account-btn').addEventListener('click', () => {
     $('#acct-name').textContent = me?.name ?? ''
     $('#acct-avatar').textContent = [...(me?.name ?? '?')][0]
+    renderPasskeys()
     openSheet($('#sheet-account'))
 })
 $('#acct-logout').addEventListener('click', async () => {
@@ -1143,5 +1233,11 @@ $('#acct-logout').addEventListener('click', async () => {
 
 applyThemeVars()
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyThemeVars)
+// sign-in options depend on the server: closed sign-ups hide "Create account"
+api('/api/config').then(c => {
+    config = c
+    if (!c.signups) { $('.auth-seg').hidden = true; setAuthMode('login') }
+    $('#auth-passkey').hidden = !passkeysOK()
+}, () => {})
 api('/api/auth/me').then(({ user }) => enterApp(user), () => showAuth())
 if ('serviceWorker' in navigator && isSecureContext) navigator.serviceWorker.register('/sw.js').catch(() => {})

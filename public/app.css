@@ -208,6 +208,7 @@ button { cursor: pointer; }
 .store-status:empty { display: none; }
 .store-book { display: flex; flex-direction: column; }
 .store-book .b-author { padding-right: 0; margin-bottom: 10px; }
+.store-book .b-lang { margin: -6px 0 10px; font-size: 12px; color: var(--muted); }
 .get-btn {
   margin-top: auto; align-self: flex-start; min-height: 36px; padding: 0 16px; border: 0; border-radius: 18px;
   background: var(--mark); color: var(--mark-ink); font-weight: 700; font-size: 14px;
@@ -237,6 +238,15 @@ button { cursor: pointer; }
 .field input:focus-visible { outline-offset: 0; }
 .auth-hint { margin: -4px 0 14px; font-size: 14px; color: var(--muted); }
 .auth-error { margin: 0 0 14px; color: var(--danger); }
+.auth-passkey { margin-top: 12px; }
+
+/* Account: passkeys */
+.acct-passkeys h3 { margin: 18px 0 4px; padding: 0 4px; font-size: 16px; }
+.acct-passkeys > p { margin: 0 0 10px; padding: 0 4px; color: var(--s-muted); font-size: 14px; }
+.pk-list { margin: 0; padding: 0; list-style: none; }
+.pk-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 54px; border-top: 1px solid var(--s-line); padding: 0 4px; }
+.pk-list small { display: block; color: var(--s-muted); font-size: 13px; }
+.pk-list button { border: 0; background: none; color: var(--danger); font-size: 15px; padding: 10px 0 10px 10px; }
 .btn-block { width: 100%; justify-content: center; min-height: 52px; font-size: 16px; padding: 0 18px; }
 .btn-block:disabled { opacity: .6; }
 
